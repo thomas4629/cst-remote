@@ -1,12 +1,12 @@
 use super::{input_service::*, *};
+#[cfg(feature = "unix-file-copy-paste")]
+use crate::clipboard::try_empty_clipboard_files;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use crate::clipboard::{update_clipboard, ClipboardSide};
 #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
 use crate::clipboard_file::*;
 #[cfg(target_os = "android")]
 use crate::keyboard::client::map_key_to_control_key;
-#[cfg(target_os = "linux")]
-use crate::platform::linux::is_x11;
 #[cfg(target_os = "linux")]
 use crate::platform::linux_desktop_manager;
 #[cfg(any(target_os = "windows", target_os = "linux"))]
@@ -33,6 +33,7 @@ use hbb_common::{
     get_time, get_version_number,
     message_proto::{option_message::BoolOption, permission_info::Permission},
     password_security::{self as password, ApproveMode},
+    sha2::{Digest, Sha256},
     sleep, timeout,
     tokio::{
         net::TcpStream,
@@ -45,7 +46,6 @@ use hbb_common::{
 use scrap::android::{call_main_service_key_event, call_main_service_pointer_input};
 use serde_derive::Serialize;
 use serde_json::{json, value::Value};
-use sha2::{Digest, Sha256};
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use std::sync::atomic::Ordering;
 use std::{
@@ -228,7 +228,6 @@ pub struct Connection {
     #[cfg(target_os = "linux")]
     linux_headless_handle: LinuxHeadlessHandle,
     closed: bool,
-    delay_response_instant: Instant,
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     start_cm_ipc_para: Option<StartCmIpcPara>,
     auto_disconnect_timer: Option<(Instant, u64)>,
@@ -376,7 +375,6 @@ impl Connection {
             #[cfg(target_os = "linux")]
             linux_headless_handle,
             closed: false,
-            delay_response_instant: Instant::now(),
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
             start_cm_ipc_para: Some(StartCmIpcPara {
                 rx_to_cm,
@@ -443,6 +441,28 @@ impl Connection {
         std::thread::spawn(move || Self::handle_input(_rx_input, tx_cloned));
         let mut second_timer = crate::rustdesk_interval(time::interval(Duration::from_secs(1)));
 
+        #[cfg(feature = "unix-file-copy-paste")]
+        let rx_clip_holder;
+        let mut rx_clip;
+        let _tx_clip: mpsc::UnboundedSender<i32>;
+        #[cfg(feature = "unix-file-copy-paste")]
+        {
+            rx_clip_holder = (
+                clipboard::get_rx_cliprdr_server(id),
+                crate::SimpleCallOnReturn {
+                    b: true,
+                    f: Box::new(move || {
+                        clipboard::remove_channel_by_conn_id(id);
+                    }),
+                },
+            );
+            rx_clip = rx_clip_holder.0.lock().await;
+        }
+        #[cfg(not(feature = "unix-file-copy-paste"))]
+        {
+            (_tx_clip, rx_clip) = mpsc::unbounded_channel::<i32>();
+        }
+
         loop {
             tokio::select! {
                 // biased; // video has higher priority // causing test_delay_timer failed while transferring big file
@@ -462,11 +482,6 @@ impl Connection {
                             conn.send_close_reason_no_retry("").await;
                             conn.on_close("connection manager", true).await;
                             break;
-                        }
-                        #[cfg(target_os = "android")]
-                        ipc::Data::InputControl(v) => {
-                            conn.keyboard = v;
-                            conn.send_permission(Permission::Keyboard, v).await;
                         }
                         ipc::Data::CmErr(e) => {
                             if e != "expected" {
@@ -493,6 +508,15 @@ impl Connection {
                                 conn.send_permission(Permission::Keyboard, enabled).await;
                                 if let Some(s) = conn.server.upgrade() {
                                     s.write().unwrap().subscribe(
+                                        super::clipboard_service::NAME,
+                                        conn.inner.clone(), conn.can_sub_clipboard_service());
+                                    #[cfg(feature = "unix-file-copy-paste")]
+                                    s.write().unwrap().subscribe(
+                                        super::clipboard_service::FILE_NAME,
+                                        conn.inner.clone(),
+                                        conn.can_sub_file_clipboard_service(),
+                                    );
+                                    s.write().unwrap().subscribe(
                                         NAME_CURSOR,
                                         conn.inner.clone(), enabled || conn.show_remote_cursor);
                                 }
@@ -502,7 +526,7 @@ impl Connection {
                                 if let Some(s) = conn.server.upgrade() {
                                     s.write().unwrap().subscribe(
                                         super::clipboard_service::NAME,
-                                        conn.inner.clone(), conn.clipboard_enabled() && conn.peer_keyboard_enabled());
+                                        conn.inner.clone(), conn.can_sub_clipboard_service());
                                 }
                             } else if &name == "audio" {
                                 conn.audio = enabled;
@@ -517,6 +541,18 @@ impl Connection {
                             } else if &name == "file" {
                                 conn.file = enabled;
                                 conn.send_permission(Permission::File, enabled).await;
+                                #[cfg(feature = "unix-file-copy-paste")]
+                                if !enabled {
+                                    conn.try_empty_file_clipboard();
+                                }
+                                #[cfg(feature = "unix-file-copy-paste")]
+                                if let Some(s) = conn.server.upgrade() {
+                                    s.write().unwrap().subscribe(
+                                        super::clipboard_service::FILE_NAME,
+                                        conn.inner.clone(),
+                                        conn.can_sub_file_clipboard_service(),
+                                    );
+                                }
                             } else if &name == "restart" {
                                 conn.restart = enabled;
                                 conn.send_permission(Permission::Restart, enabled).await;
@@ -531,7 +567,7 @@ impl Connection {
                         ipc::Data::RawMessage(bytes) => {
                             allow_err!(conn.stream.send_raw(bytes).await);
                         }
-                        #[cfg(any(target_os="windows", target_os="linux", target_os = "macos"))]
+                        #[cfg(target_os = "windows")]
                         ipc::Data::ClipboardFile(clip) => {
                             allow_err!(conn.stream.send(&clip_2_msg(clip)).await);
                         }
@@ -738,9 +774,30 @@ impl Connection {
                         });
                         conn.send(msg_out.into()).await;
                     }
-                    video_service::VIDEO_QOS.lock().unwrap().user_delay_response_elapsed(conn.inner.id(), conn.delay_response_instant.elapsed().as_millis());
+                    if conn.is_authed_remote_conn() {
+                        if let Some(last_test_delay) = conn.last_test_delay {
+                            video_service::VIDEO_QOS.lock().unwrap().user_delay_response_elapsed(id, last_test_delay.elapsed().as_millis());
+                        }
+                    }
                 }
+                clip_file = rx_clip.recv() => match clip_file {
+                    Some(_clip) => {
+                        #[cfg(feature = "unix-file-copy-paste")]
+                        if crate::is_support_file_copy_paste(&conn.lr.version)
+                        {
+                            conn.handle_file_clip(_clip).await;
+                        }
+                    }
+                    None => {
+                        //
+                    }
+                },
             }
+        }
+
+        #[cfg(feature = "unix-file-copy-paste")]
+        {
+            conn.try_empty_file_clipboard();
         }
 
         if let Some(video_privacy_conn_id) = privacy_mode::get_privacy_mode_conn_id() {
@@ -793,12 +850,13 @@ impl Connection {
                         handle_mouse(&msg, id);
                     }
                     MessageInput::Key((mut msg, press)) => {
-                        // todo: press and down have similar meanings.
-                        if press && msg.mode.enum_value() == Ok(KeyboardMode::Legacy) {
+                        // Set the press state to false, use `down` only in `handle_key()`.
+                        msg.press = false;
+                        if press {
                             msg.down = true;
                         }
                         handle_key(&msg);
-                        if press && msg.mode.enum_value() == Ok(KeyboardMode::Legacy) {
+                        if press {
                             msg.down = false;
                             handle_key(&msg);
                         }
@@ -1201,15 +1259,20 @@ impl Connection {
             );
         }
 
-        #[cfg(any(
-            target_os = "windows",
-            all(
-                any(target_os = "linux", target_os = "macos"),
-                feature = "unix-file-copy-paste"
-            )
-        ))]
+        #[cfg(any(target_os = "windows", feature = "unix-file-copy-paste"))]
         {
-            platform_additions.insert("has_file_clipboard".into(), json!(true));
+            let is_both_windows = cfg!(target_os = "windows")
+                && self.lr.my_platform == whoami::Platform::Windows.to_string();
+            #[cfg(feature = "unix-file-copy-paste")]
+            let is_unix_and_peer_supported = crate::is_support_file_copy_paste(&self.lr.version);
+            #[cfg(not(feature = "unix-file-copy-paste"))]
+            let is_unix_and_peer_supported = false;
+            // to-do: add file clipboard support for macos
+            let is_both_macos = cfg!(target_os = "macos")
+                && self.lr.my_platform == whoami::Platform::MacOS.to_string();
+            let has_file_clipboard =
+                is_both_windows || (is_unix_and_peer_supported && !is_both_macos);
+            platform_additions.insert("has_file_clipboard".into(), json!(has_file_clipboard));
         }
 
         #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
@@ -1371,11 +1434,12 @@ impl Connection {
                 if !self.follow_remote_window {
                     noperms.push(NAME_WINDOW_FOCUS);
                 }
-                if !self.clipboard_enabled()
-                    || !self.peer_keyboard_enabled()
-                    || crate::get_builtin_option(keys::OPTION_ONE_WAY_CLIPBOARD_REDIRECTION) == "Y"
-                {
+                if !self.can_sub_clipboard_service() {
                     noperms.push(super::clipboard_service::NAME);
+                }
+                #[cfg(feature = "unix-file-copy-paste")]
+                if !self.can_sub_file_clipboard_service() {
+                    noperms.push(super::clipboard_service::FILE_NAME);
                 }
                 if !self.audio_enabled() {
                     noperms.push(super::audio_service::NAME);
@@ -1446,13 +1510,27 @@ impl Connection {
         self.clipboard && !self.disable_clipboard
     }
 
+    #[inline]
+    fn can_sub_clipboard_service(&self) -> bool {
+        self.clipboard_enabled()
+            && self.peer_keyboard_enabled()
+            && crate::get_builtin_option(keys::OPTION_ONE_WAY_CLIPBOARD_REDIRECTION) != "Y"
+    }
+
     fn audio_enabled(&self) -> bool {
         self.audio && !self.disable_audio
     }
 
-    #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+    #[cfg(any(target_os = "windows", feature = "unix-file-copy-paste"))]
     fn file_transfer_enabled(&self) -> bool {
         self.file && self.enable_file_transfer
+    }
+
+    #[cfg(feature = "unix-file-copy-paste")]
+    fn can_sub_file_clipboard_service(&self) -> bool {
+        self.clipboard_enabled()
+            && self.file_transfer_enabled()
+            && crate::get_builtin_option(keys::OPTION_ONE_WAY_FILE_TRANSFER) != "Y"
     }
 
     fn try_start_cm(&mut self, peer_id: String, name: String, authorized: bool) {
@@ -1874,7 +1952,6 @@ impl Connection {
                         .user_network_delay(self.inner.id(), new_delay);
                     self.network_delay = new_delay;
                 }
-                self.delay_response_instant = Instant::now();
             }
         } else if let Some(message::Union::SwitchSidesResponse(_s)) = msg.union {
             #[cfg(feature = "flutter")]
@@ -1965,8 +2042,6 @@ impl Connection {
                 Some(message::Union::KeyEvent(..)) => {}
                 #[cfg(any(target_os = "android"))]
                 Some(message::Union::KeyEvent(mut me)) => {
-                    let is_press = (me.press || me.down) && !crate::is_modifier(&me);
-
                     let key = match me.mode.enum_value() {
                         Ok(KeyboardMode::Map) => {
                             Some(crate::keyboard::keycode_to_rdev_key(me.chr()))
@@ -1981,6 +2056,9 @@ impl Connection {
                         _ => None,
                     }
                     .filter(crate::keyboard::is_modifier);
+
+                    let is_press =
+                        (me.press || me.down) && !(crate::is_modifier(&me) || key.is_some());
 
                     if let Some(key) = key {
                         if is_press {
@@ -2022,14 +2100,6 @@ impl Connection {
                         }
                         // https://github.com/rustdesk/rustdesk/issues/8633
                         MOUSE_MOVE_TIME.store(get_time(), Ordering::SeqCst);
-                        // handle all down as press
-                        // fix unexpected repeating key on remote linux, seems also fix abnormal alt/shift, which
-                        // make sure all key are released
-                        let is_press = if cfg!(target_os = "linux") {
-                            (me.press || me.down) && !crate::is_modifier(&me)
-                        } else {
-                            me.press
-                        };
 
                         let key = match me.mode.enum_value() {
                             Ok(KeyboardMode::Map) => {
@@ -2045,6 +2115,16 @@ impl Connection {
                             _ => None,
                         }
                         .filter(crate::keyboard::is_modifier);
+
+                        // handle all down as press
+                        // fix unexpected repeating key on remote linux, seems also fix abnormal alt/shift, which
+                        // make sure all key are released
+                        // https://github.com/rustdesk/rustdesk/issues/6793
+                        let is_press = if cfg!(target_os = "linux") {
+                            (me.press || me.down) && !(crate::is_modifier(&me) || key.is_some())
+                        } else {
+                            me.press
+                        };
 
                         if let Some(key) = key {
                             if is_press {
@@ -2106,12 +2186,23 @@ impl Connection {
                     #[cfg(target_os = "android")]
                     crate::clipboard::handle_msg_multi_clipboards(_mcb);
                 }
-                Some(message::Union::Cliprdr(_clip)) =>
-                {
-                    #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
-                    if let Some(clip) = msg_2_clip(_clip) {
-                        log::debug!("got clipfile from client peer");
-                        self.send_to_cm(ipc::Data::ClipboardFile(clip))
+                #[cfg(any(target_os = "windows", feature = "unix-file-copy-paste"))]
+                Some(message::Union::Cliprdr(clip)) => {
+                    if let Some(clip) = msg_2_clip(clip) {
+                        #[cfg(target_os = "windows")]
+                        {
+                            self.send_to_cm(ipc::Data::ClipboardFile(clip));
+                        }
+                        #[cfg(feature = "unix-file-copy-paste")]
+                        if crate::is_support_file_copy_paste(&self.lr.version) {
+                            if let Some(msg) = unix_file_clip::serve_clip_messages(
+                                ClipboardSide::Host,
+                                clip,
+                                self.inner.id(),
+                            ) {
+                                self.send(msg).await;
+                            }
+                        }
                     }
                 }
                 Some(message::Union::FileAction(fa)) => {
@@ -2904,13 +2995,26 @@ impl Connection {
                 }
             }
         }
-        #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+        #[cfg(any(target_os = "windows", feature = "unix-file-copy-paste"))]
         if let Ok(q) = o.enable_file_transfer.enum_value() {
             if q != BoolOption::NotSet {
                 self.enable_file_transfer = q == BoolOption::Yes;
+                #[cfg(target_os = "windows")]
                 self.send_to_cm(ipc::Data::ClipboardFileEnabled(
                     self.file_transfer_enabled(),
                 ));
+                #[cfg(feature = "unix-file-copy-paste")]
+                if !self.enable_file_transfer {
+                    self.try_empty_file_clipboard();
+                }
+                #[cfg(feature = "unix-file-copy-paste")]
+                if let Some(s) = self.server.upgrade() {
+                    s.write().unwrap().subscribe(
+                        super::clipboard_service::FILE_NAME,
+                        self.inner.clone(),
+                        self.can_sub_file_clipboard_service(),
+                    );
+                }
             }
         }
         if let Ok(q) = o.disable_clipboard.enum_value() {
@@ -2920,7 +3024,7 @@ impl Connection {
                     s.write().unwrap().subscribe(
                         super::clipboard_service::NAME,
                         self.inner.clone(),
-                        self.clipboard_enabled() && self.peer_keyboard_enabled(),
+                        self.can_sub_clipboard_service(),
                     );
                 }
             }
@@ -2932,7 +3036,13 @@ impl Connection {
                     s.write().unwrap().subscribe(
                         super::clipboard_service::NAME,
                         self.inner.clone(),
-                        self.clipboard_enabled() && self.peer_keyboard_enabled(),
+                        self.can_sub_clipboard_service(),
+                    );
+                    #[cfg(feature = "unix-file-copy-paste")]
+                    s.write().unwrap().subscribe(
+                        super::clipboard_service::FILE_NAME,
+                        self.inner.clone(),
+                        self.can_sub_file_clipboard_service(),
                     );
                     s.write().unwrap().subscribe(
                         NAME_CURSOR,
@@ -3315,6 +3425,48 @@ impl Connection {
             name: self.lr.my_name.clone(),
             session_id: self.lr.session_id,
         }
+    }
+
+    fn is_authed_remote_conn(&self) -> bool {
+        if let Some(id) = self.authed_conn_id.as_ref() {
+            return id.conn_type() == AuthConnType::Remote;
+        }
+        false
+    }
+
+    #[cfg(feature = "unix-file-copy-paste")]
+    async fn handle_file_clip(&mut self, clip: clipboard::ClipboardFile) {
+        let is_stopping_allowed = clip.is_stopping_allowed();
+        let is_keyboard_enabled = self.peer_keyboard_enabled();
+        let file_transfer_enabled = self.file_transfer_enabled();
+        let stop = is_stopping_allowed && !file_transfer_enabled;
+        log::debug!(
+            "Process clipboard message from clip, stop: {}, is_stopping_allowed: {}, file_transfer_enabled: {}",
+            stop, is_stopping_allowed, file_transfer_enabled);
+        if !stop {
+            use hbb_common::config::keys::OPTION_ONE_WAY_FILE_TRANSFER;
+            // Note: Code will not reach here if `crate::get_builtin_option(OPTION_ONE_WAY_FILE_TRANSFER) == "Y"` is true.
+            // Because `file-clipboard` service will not be subscribed.
+            // But we still check it here to keep the same logic to windows version in `ui_cm_interface.rs`.
+            if clip.is_beginning_message()
+                && crate::get_builtin_option(OPTION_ONE_WAY_FILE_TRANSFER) == "Y"
+            {
+                // If one way file transfer is enabled, don't send clipboard file to client
+            } else {
+                // Maybe we should end the connection, because copy&paste files causes everything to wait.
+                allow_err!(
+                    self.stream
+                        .send(&crate::clipboard_file::clip_2_msg(clip))
+                        .await
+                );
+            }
+        }
+    }
+
+    #[inline]
+    #[cfg(feature = "unix-file-copy-paste")]
+    fn try_empty_file_clipboard(&mut self) {
+        try_empty_clipboard_files(ClipboardSide::Host, self.inner.id());
     }
 }
 
@@ -3803,10 +3955,6 @@ mod raii {
         fn drop(&mut self) {
             let mut active_conns_lock = ALIVE_CONNS.lock().unwrap();
             active_conns_lock.retain(|&c| c != self.0);
-            video_service::VIDEO_QOS
-                .lock()
-                .unwrap()
-                .on_connection_close(self.0);
         }
     }
 
@@ -3824,6 +3972,12 @@ mod raii {
             _ONCE.call_once(|| {
                 shutdown_hooks::add_shutdown_hook(connection_shutdown_hook);
             });
+            if conn_type == AuthConnType::Remote {
+                video_service::VIDEO_QOS
+                    .lock()
+                    .unwrap()
+                    .on_connection_open(conn_id);
+            }
             Self(conn_id, conn_type)
         }
 
@@ -3921,12 +4075,20 @@ mod raii {
                 );
             }
         }
+
+        pub fn conn_type(&self) -> AuthConnType {
+            self.1
+        }
     }
 
     impl Drop for AuthedConnID {
         fn drop(&mut self) {
             if self.1 == AuthConnType::Remote {
                 scrap::codec::Encoder::update(scrap::codec::EncodingUpdate::Remove(self.0));
+                video_service::VIDEO_QOS
+                    .lock()
+                    .unwrap()
+                    .on_connection_close(self.0);
             }
             AUTHED_CONNS.lock().unwrap().retain(|c| c.0 != self.0);
             let remote_count = AUTHED_CONNS

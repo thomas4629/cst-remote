@@ -23,7 +23,6 @@ use serde_derive::Serialize;
 use std::process::Child;
 use std::{
     collections::HashMap,
-    sync::atomic::{AtomicUsize, Ordering},
     sync::{Arc, Mutex},
 };
 
@@ -47,6 +46,8 @@ pub struct UiStatus {
     pub mouse_time: i64,
     #[cfg(not(feature = "flutter"))]
     pub id: String,
+    #[cfg(feature = "flutter")]
+    pub video_conn_count: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -65,13 +66,13 @@ lazy_static::lazy_static! {
         mouse_time: 0,
         #[cfg(not(feature = "flutter"))]
         id: "".to_owned(),
+        #[cfg(feature = "flutter")]
+        video_conn_count: 0,
     }));
     static ref ASYNC_JOB_STATUS : Arc<Mutex<String>> = Default::default();
     static ref ASYNC_HTTP_STATUS : Arc<Mutex<HashMap<String, String>>> = Arc::new(Mutex::new(HashMap::new()));
     static ref TEMPORARY_PASSWD : Arc<Mutex<String>> = Arc::new(Mutex::new("".to_owned()));
 }
-
-pub static VIDEO_CONN_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 lazy_static::lazy_static! {
@@ -211,6 +212,7 @@ pub fn get_local_option(key: String) -> String {
 }
 
 #[inline]
+#[cfg(feature = "flutter")]
 pub fn get_hard_option(key: String) -> String {
     config::HARD_SETTINGS
         .read()
@@ -489,6 +491,7 @@ pub fn set_socks(proxy: String, username: String, password: String) {
 }
 
 #[inline]
+#[cfg(feature = "flutter")]
 pub fn get_proxy_status() -> bool {
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     return ipc::get_proxy_status();
@@ -1144,15 +1147,11 @@ async fn check_connect_status_(reconnect: bool, rx: mpsc::UnboundedReceiver<ipc:
     let mut key_confirmed = false;
     let mut rx = rx;
     let mut mouse_time = 0;
+    #[cfg(feature = "flutter")]
+    let mut video_conn_count = 0;
     #[cfg(not(feature = "flutter"))]
     let mut id = "".to_owned();
-    #[cfg(any(
-        target_os = "windows",
-        all(
-            any(target_os = "linux", target_os = "macos"),
-            feature = "unix-file-copy-paste"
-        )
-    ))]
+    #[cfg(target_os = "windows")]
     let mut enable_file_transfer = "".to_owned();
     let is_cm = crate::common::is_cm();
 
@@ -1179,13 +1178,7 @@ async fn check_connect_status_(reconnect: bool, rx: mpsc::UnboundedReceiver<ipc:
                                 *OPTIONS.lock().unwrap() = v;
                                 *OPTION_SYNCED.lock().unwrap() = true;
 
-                                #[cfg(any(
-                                        target_os = "windows",
-                                        all(
-                                            any(target_os="linux", target_os = "macos"),
-                                            feature = "unix-file-copy-paste"
-                                            )
-                                        ))]
+                                #[cfg(target_os = "windows")]
                                 {
                                     let b = OPTIONS.lock().unwrap().get(OPTION_ENABLE_FILE_TRANSFER).map(|x| x.to_string()).unwrap_or_default();
                                     if b != enable_file_transfer {
@@ -1204,8 +1197,9 @@ async fn check_connect_status_(reconnect: bool, rx: mpsc::UnboundedReceiver<ipc:
                                     *TEMPORARY_PASSWD.lock().unwrap() = value;
                                 }
                             }
+                            #[cfg(feature = "flutter")]
                             Ok(Some(ipc::Data::VideoConnCount(Some(n)))) => {
-                                VIDEO_CONN_COUNT.store(n, Ordering::Relaxed);
+                                video_conn_count = n;
                             }
                             Ok(Some(ipc::Data::OnlineStatus(Some((mut x, _c))))) => {
                                 if x > 0 {
@@ -1223,6 +1217,8 @@ async fn check_connect_status_(reconnect: bool, rx: mpsc::UnboundedReceiver<ipc:
                                     mouse_time,
                                     #[cfg(not(feature = "flutter"))]
                                     id: id.clone(),
+                                    #[cfg(feature = "flutter")]
+                                    video_conn_count,
                                 };
                             }
                             _ => {}
@@ -1236,6 +1232,7 @@ async fn check_connect_status_(reconnect: bool, rx: mpsc::UnboundedReceiver<ipc:
                         c.send(&ipc::Data::Options(None)).await.ok();
                         c.send(&ipc::Data::Config(("id".to_owned(), None))).await.ok();
                         c.send(&ipc::Data::Config(("temporary-password".to_owned(), None))).await.ok();
+                        #[cfg(feature = "flutter")]
                         c.send(&ipc::Data::VideoConnCount(None)).await.ok();
                     }
                 }
@@ -1256,6 +1253,8 @@ async fn check_connect_status_(reconnect: bool, rx: mpsc::UnboundedReceiver<ipc:
             mouse_time,
             #[cfg(not(feature = "flutter"))]
             id: id.clone(),
+            #[cfg(feature = "flutter")]
+            video_conn_count,
         };
         sleep(1.).await;
     }
