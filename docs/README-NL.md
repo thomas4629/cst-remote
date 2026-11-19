@@ -9,9 +9,9 @@
   <b>Wij hebben uw hulp nodig om dit README bestand te vertalen, <a href="https://github.com/rustdesk/rustdesk/tree/master/src/lang">RustDesk UI</a> en <a href="https://github.com/rustdesk/doc.rustdesk.com">Doc</a> naar uw moedertaal</b>
 </p>
 
-Chat met ons: [Discord](https://discord.gg/nDceKgxnkV) | [Twitter](https://twitter.com/rustdesk) | [Reddit](https://www.reddit.com/r/rustdesk)
+Chat met ons: [Discord](https://discord.gg/nDceKgxnkV) | [Twitter](https://twitter.com/rustdesk) | [Reddit](https://www.reddit.com/r/rustdesk) | [YouTube](https://www.youtube.com/@rustdesk)
 
-[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/I2I04VU09)
+[![RustDesk Server Pro](https://img.shields.io/badge/RustDesk%20Server%20Pro-Geavanceerde%20Functies-blue)](https://rustdesk.com/pricing.html)
 
 Alweer een andere programma voor -bureaublad op afstand-, geschreven in Rust. Werkt -out of the box-, geen configuratie nodig. U heeft volledige controle over uw gegevens, en hoeft zich geen zorgen te maken over de beveiliging. U kunt onze rendez-vous/relay server gebruiken, [je eigen server opzetten](https://rustdesk.com/blog/id-relay-set), of [je eigen rendez-vous/relay-server schrijven](https://github.com/rustdesk/rustdesk-server-demo).
 
@@ -148,7 +148,7 @@ Zorg ervoor dat je deze commando's van de root van de RustDesk-repository uitvoe
 
 ## Bestandsstructuur
 
-- **[libs/hbb_common](https://github.com/rustdesk/rustdesk/tree/master/libs/hbb_common)**: videocodec, configuratie, TCP/UDP-wrapper, protobuf, bestandssysteemfuncties voor bestandsoverdracht en nog wat andere nuttige functies
+- **[libs/hbb_common](https://github.com/rustdesk/hbb_common)**: videocodec, configuratie, TCP/UDP-wrapper, protobuf, bestandssysteemfuncties voor bestandsoverdracht en nog wat andere nuttige functies
 - **[libs/scrap](https://github.com/rustdesk/rustdesk/tree/master/libs/scrap)**: schermopname
 - **[libs/enigo](https://github.com/rustdesk/rustdesk/tree/master/libs/enigo)**: platformspecifieke muis- en toetsenbordbeheer
 - **[src/ui](https://github.com/rustdesk/rustdesk/tree/master/src/ui)**: GUI

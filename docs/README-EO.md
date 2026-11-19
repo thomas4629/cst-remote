@@ -9,9 +9,9 @@
   <b>Ni bezonas helpon traduki tiun README kaj <a href="https://github.com/rustdesk/rustdesk/tree/master/src/lang">la interfacon</a> al via denaska lingvo</b>
 </p>
 
-Babili kun ni: [Discord](https://discord.gg/nDceKgxnkV) | [Twitter](https://twitter.com/rustdesk) | [Reddit](https://www.reddit.com/r/rustdesk)
+Babili kun ni: [Discord](https://discord.gg/nDceKgxnkV) | [Twitter](https://twitter.com/rustdesk) | [Reddit](https://www.reddit.com/r/rustdesk) | [YouTube](https://www.youtube.com/@rustdesk)
 
-[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/I2I04VU09)
+[![RustDesk Server Pro](https://img.shields.io/badge/RustDesk%20Server%20Pro-Altnivela%20Funkcioj-blue)](https://rustdesk.com/pricing.html)
 
 Denove alia fora labortabla programo, skribita en Rust. Ĝi funkcias elskatole, ne bezonas konfiguraĵon. Vi havas la tutan kontrolon sur viaj datumoj, sen zorgo pri sekureco. Vi povas uzi nian servilon rendezvous/relajsan, [agordi vian propran](https://rustdesk.com/server), aŭ [skribi vian propran servilon rendezvous/relajsan](https://github.com/rustdesk/rustdesk-server-demo).
 
@@ -128,7 +128,7 @@ Bonvolu certigi, ke vi plenumas tiujn komandojn el la radiko de la deponejo Rust
 
 ## Dosierstrukturo
 
-- **[libs/hbb_common](https://github.com/rustdesk/rustdesk/tree/master/libs/hbb_common)**: videa kodeko, agordado, kovrilo tcp/udp, protobuf, funkcioj fs por dosiertransigo, kaj aliaj utilaĵaj funkcioj
+- **[libs/hbb_common](https://github.com/rustdesk/hbb_common)**: videa kodeko, agordado, kovrilo tcp/udp, protobuf, funkcioj fs por dosiertransigo, kaj aliaj utilaĵaj funkcioj
 - **[libs/scrap](https://github.com/rustdesk/rustdesk/tree/master/libs/scrap)**: ekrankaptado
 - **[libs/enigo](https://github.com/rustdesk/rustdesk/tree/master/libs/enigo)**: operaciumspecifa kontrolo de klavaro/muso
 - **[src/ui](https://github.com/rustdesk/rustdesk/tree/master/src/ui)**: interfaco
