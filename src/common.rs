@@ -1384,7 +1384,7 @@ pub fn get_audit_server(api: String, custom: String, typ: String) -> String {
     if url.is_empty() || is_public(&url) {
         return "".to_owned();
     }
-    format!("{}/api/audit/{}", url, typ)
+    format!("{}/audit/{}", url, typ)
 }
 
 /// Check if we should use raw TCP proxy for API calls.
@@ -1427,7 +1427,7 @@ fn is_tcp_proxy_api_target(url: &str) -> bool {
 #[inline]
 fn should_throttle_log(url: &str) -> bool {
     url::Url::parse(url)
-        .map(|parsed| parsed.path().ends_with("/api/heartbeat"))
+        .map(|parsed| parsed.path().ends_with("/heartbeat"))
         .unwrap_or(false)
 }
 
@@ -3294,11 +3294,11 @@ mod tests {
     #[test]
     fn test_should_use_tcp_proxy_for_api_url() {
         assert!(should_use_tcp_proxy_for_api_url(
-            "https://admin.example.com/api/login",
+            "https://admin.example.com/login",
             "https://admin.example.com"
         ));
         assert!(should_use_tcp_proxy_for_api_url(
-            "https://admin.example.com:21114/api/login",
+            "https://admin.example.com:21114/login",
             "https://admin.example.com"
         ));
         assert!(!should_use_tcp_proxy_for_api_url(
