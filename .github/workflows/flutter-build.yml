@@ -12,6 +12,13 @@ on:
       publish-update-metadata:
         type: boolean
         default: false
+      # Restrict the reusable build to a subset of platforms. 'all' (default) keeps the
+      # current behavior so existing callers (flutter-ci / flutter-tag) are unaffected.
+      # Values are comma-separated platform tokens: windows, macos, linux, android.
+      # iOS runs on a macOS runner and is grouped under 'macos'.
+      platforms:
+        type: string
+        default: "all"
 
 # NOTE: F-Droid builder script 'flutter/build_fdroid.sh' reads environment
 # variables from this workflow!
@@ -157,6 +164,7 @@ jobs:
   build-for-windows-flutter:
     name: ${{ matrix.job.target }}
     needs: [build-RustDeskTempTopMostWindow, generate-bridge]
+    if: ${{ inputs.platforms == 'all' || contains(inputs.platforms, 'windows') }}
     runs-on: ${{ matrix.job.os }}
     strategy:
       fail-fast: false
@@ -583,6 +591,7 @@ jobs:
   build-for-windows-sciter:
     name: ${{ matrix.job.target }} (${{ matrix.job.os }})
     needs: [validate-update-metadata-keys]
+    if: ${{ inputs.platforms == 'all' || contains(inputs.platforms, 'windows') }}
     runs-on: ${{ matrix.job.os }}
     # Temporarily disable this action due to additional test is needed.
     # if: false
@@ -793,7 +802,7 @@ jobs:
             ./SignOutput/rustdesk-*.exe
 
   build-rustdesk-ios:
-    if: ${{ inputs.upload-artifact }}
+    if: ${{ inputs.upload-artifact && (inputs.platforms == 'all' || contains(inputs.platforms, 'macos')) }}
     name: build rustdesk ios ipa
     runs-on: ${{ matrix.job.os }}
     needs: [generate-bridge]
@@ -918,6 +927,7 @@ jobs:
     name: ${{ matrix.job.target }}
     runs-on: ${{ matrix.job.os }}
     needs: [generate-bridge]
+    if: ${{ inputs.platforms == 'all' || contains(inputs.platforms, 'macos') }}
     strategy:
       fail-fast: false
       matrix:
@@ -1428,6 +1438,7 @@ jobs:
   build-rustdesk-android:
     needs: [generate-bridge]
     name: build rustdesk android apk ${{ matrix.job.target }}
+    if: ${{ inputs.platforms == 'all' || contains(inputs.platforms, 'android') }}
     runs-on: ${{ matrix.job.os }}
     strategy:
       fail-fast: false
@@ -1920,6 +1931,7 @@ jobs:
   build-rustdesk-linux:
     needs: [generate-bridge]
     name: build rustdesk linux ${{ matrix.job.target }}
+    if: ${{ inputs.platforms == 'all' || contains(inputs.platforms, 'linux') }}
     runs-on: ${{ matrix.job.on }}
     strategy:
       fail-fast: false
@@ -2274,6 +2286,7 @@ jobs:
   build-rustdesk-linux-drm:
     needs: [generate-bridge]
     name: build rustdesk linux drm x86_64
+    if: ${{ inputs.platforms == 'all' || contains(inputs.platforms, 'linux') }}
     runs-on: ubuntu-22.04
     steps:
       - name: Export GitHub Actions cache environment variables
@@ -2591,7 +2604,7 @@ jobs:
           path: ${{ env.DRM_DEB }}
 
   build-rustdesk-linux-sciter:
-    if: ${{ inputs.upload-artifact }}
+    if: ${{ inputs.upload-artifact && (inputs.platforms == 'all' || contains(inputs.platforms, 'linux')) }}
     needs: [validate-update-metadata-keys]
     runs-on: ${{ matrix.job.on }}
     name: build-rustdesk-linux-sciter ${{ matrix.job.target }}
