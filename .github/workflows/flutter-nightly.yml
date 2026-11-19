@@ -13,5 +13,3 @@ jobs:
     with:
       upload-artifact: true
       upload-tag: "nightly"
-      # Only build Windows in the nightly build.
-      platforms: "windows"
