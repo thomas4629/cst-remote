@@ -119,7 +119,7 @@ const CHARS: &[char] = &[
 ];
 
 pub const RENDEZVOUS_SERVERS: &[&str] = &["k3.morewin-tech.com"];
-pub const RS_PUB_KEY: &str = "R8k9mP2vX7wQ4nL6zJ3bF5tY";
+pub const RS_PUB_KEY: &str = "cziQSWd2W0+ejQ6aRimaSD+NRqUV0tFxlhxW4g9zN9Y=";
 
 pub const RENDEZVOUS_PORT: i32 = 21116;
 pub const RELAY_PORT: i32 = 21117;
